@@ -32,6 +32,9 @@ RESERVE="${RESERVE:-100}"
 MAX_DURATION="${MAX_DURATION:-2700}"
 # in seconds, for a single api request
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-60}"
+# page reads per package, 0 for no limit; the dry run in pull requests reads
+# only a few to leave the budget to the cleanup
+MAX_PAGES="${MAX_PAGES:-0}"
 
 cutoff="$(date -u -d "-${MAX_AGE} hours" +%Y-%m-%dT%H:%M:%SZ)"
 untagged_cutoff="$(date -u -d "-${MAX_UNTAGGED_AGE} days" +%Y-%m-%dT%H:%M:%SZ)"
@@ -77,8 +80,13 @@ cleanup_package() {
   local api="/orgs/${ORG}/packages/container/${package}/versions"
   local versions selected id tags
 
-  local page=1 page_deleted
+  local page=1 page_deleted reads=0
   while true; do
+    if ((MAX_PAGES > 0 && reads >= MAX_PAGES)); then
+      echo "${package}: read ${reads} pages, the limit"
+      return
+    fi
+    reads=$((reads + 1))
     if ! can_request; then
       stopped="${package} at page ${page}"
       return
