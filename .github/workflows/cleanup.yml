@@ -54,7 +54,7 @@ jobs:
   # only reads, so it can't delete anything whatever the pull request changes
   dry-run:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 15
     permissions:
       contents: read
