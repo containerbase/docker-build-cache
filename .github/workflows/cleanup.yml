@@ -1,7 +1,7 @@
 name: cleanup
 
 # Deletes old handoff caches and untagged versions of the docker-build-cache
-# package, see `.github/cleanup.sh`. Runs hourly, as the token can only send
+# and cache packages, see `.github/cleanup.sh`. Runs hourly, as the token can only send
 # 1000 requests an hour: a backlog takes several runs, afterwards a run only
 # reads a few pages.
 on:
@@ -38,7 +38,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ORG: ${{ github.repository_owner }}
-          PACKAGE: docker-build-cache
+          # this repository needs the admin role on each of them
+          PACKAGES: docker-build-cache cache
           DRY_RUN: ${{ inputs.dry-run || 'false' }}
           # in hours, for the handoff tags
           MAX_AGE: 24
