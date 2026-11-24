@@ -1,0 +1,76 @@
+name: cleanup
+
+# Deletes old versions of the ghcr.io/<owner>/docker-build-cache package:
+# - the handoff caches the `base` jobs of containerbase/base push, tagged
+#   `<uuid>-<arch>` (see `setup` in its `.github/workflows/build.yml`). They
+#   are only read by the `lang` jobs of the same run, so a day is plenty.
+# - untagged versions: caches whose tag was overwritten by a newer push,
+#   nothing reads them anymore.
+# Other tagged versions are never touched.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Only list the versions to delete'
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete old versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORG: ${{ github.repository_owner }}
+          PACKAGE: docker-build-cache
+          DRY_RUN: ${{ inputs.dry-run || 'false' }}
+          # in hours, for the handoff tags
+          MAX_AGE: 24
+          # in days, for untagged versions
+          MAX_UNTAGGED_AGE: 7
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d "-${MAX_AGE} hours" +%Y-%m-%dT%H:%M:%SZ)"
+          untagged_cutoff="$(date -u -d "-${MAX_UNTAGGED_AGE} days" +%Y-%m-%dT%H:%M:%SZ)"
+
+          # each page is a json array, jq reads them one after another
+          gh api --paginate "/orgs/${ORG}/packages/container/${PACKAGE}/versions?per_page=100" |
+            jq -r --arg cutoff "${cutoff}" --arg untagged_cutoff "${untagged_cutoff}" '
+              .[]
+              | .metadata.container.tags as $tags
+              | select(
+                  (($tags | length) > 0
+                    and .updated_at < $cutoff
+                    and all($tags[]; test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(amd64|arm64)$")))
+                  or (($tags | length) == 0 and .updated_at < $untagged_cutoff)
+                )
+              | "\(.id) \(if ($tags | length) > 0 then ($tags | join(",")) else "<untagged>" end)"
+            ' > versions.txt
+
+          echo "$(wc -l < versions.txt) versions to delete (handoff tags before ${cutoff}, untagged before ${untagged_cutoff})"
+          failed=0
+          while read -r id tags; do
+            echo "delete ${id} ${tags}"
+            if [[ "${DRY_RUN}" != "true" ]]; then
+              gh api -X DELETE "/orgs/${ORG}/packages/container/${PACKAGE}/versions/${id}" || {
+                echo "::warning::failed to delete ${id} ${tags}"
+                failed=$((failed + 1))
+              }
+            fi
+          done < versions.txt
+          if [[ "${failed}" -gt 0 ]]; then
+            echo "::error::${failed} versions could not be deleted"
+            exit 1
+          fi
