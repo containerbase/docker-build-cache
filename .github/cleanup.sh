@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Deletes old versions of the cache packages ghcr.io/<owner>/<package> in
-# PACKAGES (space separated), like docker-build-cache and cache:
-# - the handoff caches the `base` jobs of containerbase/base push, tagged
-#   `<uuid>-<arch>` (see `setup` in its `.github/workflows/build.yml`), after
-#   MAX_AGE hours. They are only read by the `lang` jobs of the same run.
+# PACKAGES (space separated):
+# - versions whose tags all match HANDOFF_TAGS (a jq regex, empty for none)
+#   after MAX_AGE hours, like the handoff caches of containerbase/base, which
+#   are only read in the same workflow run.
 # - untagged versions, caches whose tag was overwritten by a newer push, after
 #   MAX_UNTAGGED_AGE days.
-# Other tagged versions are never touched, like the caches other repositories
-# push to docker-build-cache. The packages share the request budget of a run.
+# Other tagged versions are never touched. The packages share the request
+# budget of a run.
 #
 # The api lists the newest versions first. This walks the pages from the
 # first one: deep pages fail with a server error on large packages. Deleting
@@ -26,6 +26,7 @@ set -euo pipefail
 DRY_RUN="${DRY_RUN:-false}"
 MAX_AGE="${MAX_AGE:-24}"
 MAX_UNTAGGED_AGE="${MAX_UNTAGGED_AGE:-7}"
+HANDOFF_TAGS="${HANDOFF_TAGS:-}"
 # requests of the hourly api limit to leave for other workflows
 RESERVE="${RESERVE:-100}"
 # in seconds, stop before the job timeout
@@ -71,7 +72,10 @@ can_request() {
 # checking it doesn't count against the limit
 budget="$(gh_api /rate_limit --jq '.resources.core.remaining')"
 budget=$((budget - RESERVE))
-echo "deleting handoff tags before ${cutoff} and untagged versions before ${untagged_cutoff}, budget ${budget} requests"
+if [[ -n "${HANDOFF_TAGS}" ]]; then
+  echo "deleting tags matching ${HANDOFF_TAGS} before ${cutoff}"
+fi
+echo "deleting untagged versions before ${untagged_cutoff}, budget ${budget} requests"
 
 # cleans up one package, sets `stopped` to where it stopped when the budget or
 # time ran out
@@ -102,13 +106,14 @@ cleanup_package() {
     fi
 
     # in a variable, so a jq error fails the run
-    selected="$(jq -r --arg cutoff "${cutoff}" --arg untagged_cutoff "${untagged_cutoff}" '
+    selected="$(jq -r --arg cutoff "${cutoff}" --arg untagged_cutoff "${untagged_cutoff}" --arg handoff "${HANDOFF_TAGS}" '
       .[]
       | .metadata.container.tags as $tags
       | select(
-          (($tags | length) > 0
+          ($handoff != ""
+            and ($tags | length) > 0
             and .updated_at < $cutoff
-            and all($tags[]; test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(amd64|arm64)$")))
+            and all($tags[]; test($handoff)))
           or (($tags | length) == 0 and .updated_at < $untagged_cutoff)
         )
       | "\(.id) \(if ($tags | length) > 0 then ($tags | join(",")) else "<untagged>" end)"

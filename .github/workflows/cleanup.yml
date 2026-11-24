@@ -46,6 +46,9 @@ jobs:
           # this repository needs the admin role on each of them
           PACKAGES: docker-build-cache cache
           DRY_RUN: ${{ inputs.dry-run || 'false' }}
+          # the handoff caches of containerbase/base, see `setup` in its
+          # `.github/workflows/build.yml`
+          HANDOFF_TAGS: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(amd64|arm64)$'
           # in hours, for the handoff tags
           MAX_AGE: 24
           # in days, for untagged versions
@@ -74,5 +77,6 @@ jobs:
           DRY_RUN: 'true'
           MAX_PAGES: 5
           MAX_DURATION: 600
+          HANDOFF_TAGS: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(amd64|arm64)$'
           MAX_AGE: 24
           MAX_UNTAGGED_AGE: 7
